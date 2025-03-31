@@ -3,9 +3,14 @@ const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bodyParser = require("body-parser")
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// Increase request size limit
+app.use(bodyParser.json({ limit: "50mb" }));  // Increase JSON payload limit
+app.use(bodyParser.urlencoded({ limit: "50mb", extended: true })); // Increase URL-encoded payload limit
 
 // Middleware
 app.use(express.json());  // To parse JSON request body
@@ -32,6 +37,8 @@ db.connect((err) => {
 // 📝 User Registration API
 app.post('/register', async (req, res) => {
     const { userName, email, password } = req.body;
+
+    console.log("\nRegister api called")
 
     if (!userName || !email || !password) {
         return res.status(400).json({ error: "All fields are required" });
@@ -75,6 +82,8 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
+    console.log("\nLogin api called")
+
     if (!email || !password) {
         return res.status(400).json({ error: "All fields are required" });
     }
@@ -100,34 +109,134 @@ app.post('/login', async (req, res) => {
         const SECRET_KEY = "Rental";
 
         // Generate JWT Token
-        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: "1h" });
+        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: "1111h" });
 
         console.log("User logged in successfully");
         console.log("Token:", token);
 
-        // Store token in the database (optional)
-        db.query("UPDATE users SET token = ? WHERE id = ?", [token, user.id], (err, result) => {
-            if (err) {
-              return res.status(500).json({ error: err.message });
-            }
-         });
-
-        res.status(200).json({ success: true, token: token, message: " User logged in successfully" });
+        return res.status(200).json({ 
+            success: true, token: token, message: " User logged in successfully!" 
+        });
     });
 });
 
 app.get('/user', (req, res) => {
-    db.query('SELECT * FROM users', (err, results) => {
-        if (err) {
-            console.error('Database query error:', err);
-            return res.status(500).json({ error: "Database error" });
-        }
+    const token = req.headers.authorization?.split(' ')[1];
 
-        res.status(200).json(results);
-    });
+    console.log("\nuser api called")
+
+    if (!token) {
+        return res.status(401).json({ error: "Token not provided" });
+    }
+
+    try{
+        const SECRET_KEY = "Rental";
+
+        //Here decoded with have the user data in the form of object which was used to encrypt the token
+        const decoded = jwt.verify(token, SECRET_KEY);
+
+        db.query('SELECT id, name, phone, image, email FROM users WHERE id = ?', [decoded.id], (err, results) => {
+            if (err) {
+                console.error('Database query error:', err);
+                return res.status(500).json({ error: "Database error" });
+            }
+
+            if (results.length === 0) {
+                return res.status(404).json({ error: "User not found" });
+            }
+
+            const user = results[0];
+            console.log("User found:", user);
+            res.status(200).json({ user, success: true });
+        });
+    } catch (error) {
+        console.error("Error verifying token:", error);
+        return res.status(401).json({ error: "Invalid token" });
+    }
+
 });
+
+// Retriving user data for the profile page
+app.get('/profile', (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    console.log("\nProfile api called")
+
+    if (!token) {
+        return res.status(401).json({ error: "Token not provided" });
+    }
+
+    try {
+        const SECRET_KEY = "Rental";
+        const decoded = jwt.verify(token, SECRET_KEY);
+
+        db.query('SELECT name, email, created_at, image, role FROM users WHERE id = ?', [decoded.id], (err, results) => {
+            if (err) {
+                console.error('Database query error:', err);
+                return res.status(500).json({ error: "Database error" });
+            }
+
+            if (results.length === 0) {
+                return res.status(404).json({ error: "User not found" });
+            }
+
+            const user = results[0];
+            console.log("User found:", user);
+            res.status(200).json({ user, success: true });
+        });
+    } catch (error) {
+        console.error("Error verifying token:", error);
+        return res.status(401).json({ error: "Invalid token" });
+    }
+});
+
+app.post('/updateUserDetails', async (req, res) => {
+    const { name, email, number, password, image } = req.body;
+    const token = req.headers.authorization?.split(' ')[1];
+
+    console.log("\nUpdate user details API called");
+
+    if (!token) {
+        return res.status(401).json({ error: "Token not provided" });
+    }
+
+    try {
+        const SECRET_KEY = "Rental";
+        const decoded = jwt.verify(token, SECRET_KEY);
+
+        // Hash the new password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Update the user details in the database
+        db.query('UPDATE users SET name = ?, email = ?, phone = ?, password = ?, image = ? WHERE id = ?',
+            [name, email, number, hashedPassword, image, decoded.id],
+            async (err, results) => {
+                if (err) {
+                    console.error('Database query error:', err);
+                    return res.status(500).json({ error: "Database error" });
+                }
+
+                // After updating, issue a new token with the updated user data
+                const newToken = jwt.sign({ userId: decoded.id, email: email }, SECRET_KEY, { expiresIn: '1111h' });
+
+                res.status(200).json({
+                    success: true,
+                    message: "User details updated successfully",
+                    token: newToken, // Return the new token
+                    email: email
+                });
+            }
+        );
+    } catch (error) {
+        console.error("Error verifying token:", error);
+        return res.status(401).json({ error: "Invalid token" });
+    }
+});
+
 
 // 🚀 Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
+
+
